@@ -1,0 +1,521 @@
+<!doctype html>
+<html>
+  <head>
+    <title>COVID-19 Data Visualizer</title>
+    <script src="/js/d3.min.js" type="text/JavaScript"></script>
+    <script src="/js/topojson.v1.min.js" type="text/JavaScript"></script>
+    <script src="/js/colorbrewer.js"></script>
+    <style>
+      #map-container {
+        margin: 2% 1%;
+        border: 1px solid #000;
+        border-radius: 1px;
+        opacity: 100%;
+        overflow: hidden;
+        background: #F0F8FF;
+      }
+      #info-container {
+        border: 1px solid #000;
+        border-radius: 5px;
+        opacity: 75%;
+        font-family: Arial;
+        overflow: hidden;
+        background: #f3f3f3c7;
+        position: absolute;
+      }
+      path.countries {
+        stroke-width: 1;
+        stroke: #000;
+        fill: #ff00ff;
+        transition: all 0.25s ease-in-out;
+      }
+      path.countries:hover {
+        cursor: crosshair;
+       }
+      circle.cities {
+        stroke-width: 1;
+        stroke: #4F442B;
+        fill: #FCBC34;
+      }
+      circle.centroid {
+        fill: #75739F;
+        pointer-events: none;
+      }
+      rect.bbox {
+        fill: none;
+        stroke-dasharray: 5 5;
+        stroke: #75739F;
+        stroke-width: 2;
+        pointer-events: none;
+      }
+      path.graticule {
+        fill: none;
+        stroke-width: 1;
+        stroke: #9A8B7A;
+      }
+      path.graticule.outline {
+        stroke: #9A8B7A;
+      }
+      path.merged {
+        fill: #9A8B7A;
+        stroke: #4F442B;
+        stroke-width: 2px;
+      }
+
+      .hidden { 
+        display: none; 
+      }
+
+      div.tooltip {
+        color: #222; 
+        background: #fff; 
+        padding: .5em;
+        text-shadow: #f5f5f5 0 1px 0;
+        border-radius: 2px; 
+        box-shadow: 0px 0px 2px 0px #a6a6a6; 
+        opacity: 0.9;
+        font-family: Arial;
+        position: absolute;
+      }
+      div.info_box {
+        color: #222; 
+        background: #fff; 
+        padding: .5em;
+        font-size: 12px;
+        text-shadow: #f5f5f5 0 1px 0;
+        border-radius: 2px; 
+        box-shadow: 0px 0px 2px 0px #a6a6a6; 
+        opacity: 0.9; 
+        font-family: Arial;
+        position: absolute;
+        pointer-events: none;
+      }
+    svg text{
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      optgroup { font-size:1px; }
+
+    .dd option {
+        font-size: 9px;
+        padding: 5px;
+        background: #5c5c5c;
+    }
+    red {
+      color: red;
+    }
+    green {
+      color: green;
+    }
+    </style>
+  </head>
+  <body>
+    <div id="controls">
+    </div>
+    <div id="viz">
+      <h2 style="text-align:center;">COVID-19 Data Visualizer</h2>
+      <h3 id="view-title" style="text-align:center; font-family:'Arial'; color:gray;">Weekly Covid Cases</h3>
+      <h4 style="text-align:center; font-size:12px; font-family:'Arial'; color:gray; margin-top:-18px">March 13, 2022 to March 20, 2022</h4>
+      <div style="width: 100%;">
+        <div class="dd" id="view-options" style="margin: 1%; font-family: Arial; font-size:14px">
+          <label for="view-continents-label">Continent(s):</label>
+          <select id="view-continents">
+              <option value="na-sa-view">North America + South America</option>
+              <option value="na-view">North America</option>
+              <option value="sa-view">South America</option>
+          </select>
+        </div>
+        <div id="map-container" style="width: 62.5%; float: right;"></div>
+        <div id="info-container" style="min-width: 30%; float: left; margin: 1%">
+        </div>
+      </div>
+    </div>
+
+    <script>
+      var NA_data = [];
+      var SA_data = [];
+      var NA_country_list = [];
+      var SA_country_list = [];
+      var country_data = []
+      var country_list = [];
+      
+      var throttleTimer;
+      var aProjection, geoPath;
+
+      var svg, info_svg;
+      initializeData();
+
+      var fontScale = d3.scale.linear().domain([0, 1000]).range([5,15])
+      var hover_tooltip = d3.select("#map-container").append("div").attr("class", "tooltip hidden");
+      var info_box = d3.select("#map-container").append("div").attr("class", "info_box hidden");
+      
+      d3.select(window).on("resize", throttle);
+      var width, height;
+      redraw();
+
+      // View Continent Dropdown Handler
+      d3.select("#view-continents").on("change", redraw);
+
+      // View Info Dropdown Handler
+      d3.select("#view-info").on("change", redraw);
+
+      //Initialize
+      function initializeData(){
+        d3.csv("/data/north_america_covid_weekly_trend.csv",
+        function(error, rows) {
+            rows.forEach(function(r) {
+                NA_data.push({
+                  name: r['Country/Other'],
+                  cases_thisWeek: parseInt(r['Cases in the last 7 days']),
+                  cases_lastWeek: parseInt(r['Cases in the preceding 7 days']),
+                  cases_weeklyChange: parseInt(r['Weekly Case % Change']),
+                  cases_thisWeek_perMil: parseFloat(r['Cases in the last 7 days/1M pop']),
+                  deaths_thisWeek: parseInt(r['Deaths in the last 7 days']),
+                  deaths_lastWeek: parseInt(r['Deaths in the preceding 7 days']),
+                  deaths_weeklyChange: parseInt(r['Weekly Death % Change']),
+                  deaths_thisWeek_perMil: parseFloat(r['Deaths in the last 7 days/1M pop']),
+                  population: parseFloat(r['Population'])
+                })
+              if (r['Country/Other'] == 'USA')
+                NA_country_list.push('United States of America')
+              else
+                NA_country_list.push(r['Country/Other'])
+            });
+        });
+  
+        d3.csv("/data/covid_south_america_weekly_trend.csv",
+        function(error, rows) {
+            rows.forEach(function(r) {
+                SA_data.push({
+                    name: r['Country/Other'],
+                    cases_thisWeek: parseInt(r['Cases in the last 7 days']),
+                    cases_lastWeek: parseInt(r['Cases in the preceding 7 days']),
+                    cases_weeklyChange: parseInt(r['Weekly Case % Change']),
+                    cases_thisWeek_perMil: parseFloat(r['Cases in the last 7 days/1M pop']),
+                    deaths_thisWeek: parseInt(r['Deaths in the last 7 days']),
+                    deaths_lastWeek: parseInt(r['Deaths in the preceding 7 days']),
+                    deaths_weeklyChange: parseInt(r['Weekly Death % Change']),
+                    deaths_thisWeek_perMil: parseFloat(r['Deaths in the last 7 days/1M pop']),
+                    population: parseFloat(r['Population'])
+                })
+                SA_country_list.push(r['Country/Other'])
+            });
+        });
+      }
+
+      function createMap(countries) {
+        setContinentView(d3.select("#view-continents").property('value'))
+
+        var minCaseChange = d3.min(country_data, d => parseFloat(d.cases_weeklyChange));
+        var maxCaseChange = d3.max(country_data, d => parseFloat(d.cases_weeklyChange));
+        var fillColorScale = d3.scale.linear().domain([-1, 1]).range(["green", "red"]);
+
+        var featureSize = d3.extent(countries.features, d => getCaseChange(d.properties.name));
+        var countryColor = d3.scale.quantize().domain(featureSize).range(colorbrewer.Reds[7]);
+
+        aProjection = d3.geo.mercator()
+        setContinentProjection(d3.select("#view-continents").property('value'))
+
+        geoPath = d3.geo.path().projection(aProjection);
+
+        svg.selectAll("path").data(countries.features.filter(inDataset))
+          .enter()
+          .append("path")
+            .attr("d", geoPath)
+            .attr("class", "countries")
+            .style("fill", d => getCaseChange(d.properties.name))
+            .style("stroke", d => d3.rgb(getCaseChange(d.properties.name)).darker().darker());
+          
+        d3.selectAll("path.countries")
+            .on("click", selectCountry)
+            .on("mouseover", hoverCountry)
+            .on("mouseout", unhoverCountry);
+        
+        displayInfo();
+        displayLegend();
+      }
+
+      function hoverCountry (d) {
+        d3.select(this).style("stroke-width", "3");
+        var offsetL = document.getElementById('map-container').offsetLeft+20;
+        var offsetT = document.getElementById('map-container').offsetTop+10;
+        var mouse = d3.mouse(svg.node()).map( function(d) { return parseInt(d); } );
+        hover_tooltip.classed("hidden", false)
+          .attr("style", "left:"+(mouse[0]+offsetL)+"px;top:"+(mouse[1]+offsetT)+"px; font-size:"+fontScale(width)+"px;")
+          .html(d.properties.name);
+      }
+
+      function unhoverCountry (d) {
+        d3.select(this).style("stroke-width", "1");
+        hover_tooltip.classed("hidden", true);
+        info_box.classed("hidden", true);
+      }
+
+      function selectCountry(d){
+        hover_tooltip.classed("hidden", true);
+        var mouse = d3.mouse(svg.node()).map( function(d) { return parseInt(d); } );
+        var offsetL = document.getElementById('map-container').offsetLeft+5;
+        var offsetT = document.getElementById('map-container').offsetTop+5;
+        info_box.classed("hidden", false)
+          .attr("style", "left:"+(offsetL)+"px;top:"+(offsetT)+"px; font-size:"+(fontScale(width)-2)+"px;")
+          .html(generateInfoString(d.properties.name))
+      }
+
+      function generateInfoString(country){
+        var msg;
+        var data;
+
+        for (const d of country_data)
+          if (country.localeCompare(d.name) == 0)
+            data = d
+        msg = "<h3><b>"+data.name+"</b></h3>"+
+              "<b>Population:</b> "+formatNum(data.population)+"<br><br>"+
+              "<b>Cases (Curr. Week):</b> "+formatNum(data.cases_thisWeek)+"<br>"+
+              "<b>Cases (Prev. Week):</b> "+formatNum(data.cases_lastWeek)+"<br>"+
+              "<b>Cases Per Million People (Curr. Week): </b> "+formatNum(data.cases_thisWeek_perMil)+"<br>"+
+              "<b>Weekly Cases:</b> <"+(getRateColor(data.cases_weeklyChange))+">"+(data.cases_weeklyChange > 0 ? "+"+formatNum(data.cases_weeklyChange) : formatNum(data.cases_weeklyChange))+"%</"+getRateColor(data.cases_weeklyChange)+"><br><br>"+
+              "<b>Deaths (Curr. Week):</b> "+formatNum(data.deaths_thisWeek)+"<br>"+
+              "<b>Deaths (Prev. Week):</b> "+formatNum(data.deaths_lastWeek)+"<br>"+
+              "<b>Deaths Per Million People (Curr. Week): </b>"+formatNum(data.deaths_thisWeek_perMil)+"<br>"+
+              "<b>Weekly Deaths:</b> <"+(getRateColor(data.deaths_weeklyChange))+">"+(data.deaths_weeklyChange > 0 ? "+"+formatNum(data.deaths_weeklyChange) : formatNum(data.deaths_weeklyChange))+"% <"+getRateColor(data.deaths_weeklyChange)+">"
+               
+        return msg
+      }
+
+      function getRateColor(n) {
+        if (n > 0)
+          return "red"
+        else return "green"
+      }
+
+      function inDataset(country){
+        if (country_list.includes(country.properties.name))
+          return true;
+        else return false;
+        }
+
+      function setContinentView(option){
+        if (option.localeCompare('na-sa-view') == 0){
+          country_list = NA_country_list.concat(SA_country_list);
+          country_data = NA_data.concat(SA_data)
+        }
+        else if (option.localeCompare('na-view') == 0){
+          country_list = NA_country_list;
+          country_data = NA_data;
+        }
+        else if (option.localeCompare('sa-view') == 0){
+          country_list = SA_country_list;
+          country_data = SA_data;
+        }
+      }
+
+      function setContinentProjection(option){
+        if (option.localeCompare('na-sa-view') == 0){
+          aProjection
+            .scale( width / 5 )
+            .translate([(width/2), (height/2)])
+            .center([-90,20]);
+        }
+        if (option.localeCompare('na-view') == 0){
+          aProjection
+            .scale( width / 2.4 )
+            .translate([(width/1.6), (height/1.05)])
+            .center([-90,10]);
+        }
+        if (option.localeCompare('sa-view') == 0){
+          aProjection
+            .scale( width / 2.5 )
+            .translate([(width/3), (height/10)])
+            .center([-90,10]);
+        }
+      }
+
+      function updateTotals(){
+        var curr_total = 0;
+        var prev_total = 0;
+        
+        country_data.forEach(function(d){
+          curr_total = curr_total + d.cases_thisWeek;
+          prev_total = prev_total + d.cases_lastWeek;
+        })
+        info_svg.select("#total_curr_cases").text(formatNum(curr_total));
+        info_svg.select("#total_prev_cases").text(formatNum(prev_total));
+      }
+
+      function updateRanking(){
+        sorted = country_data.sort((a, b) => d3.ascending(a.cases_thisWeek_perMil, b.cases_thisWeek_perMil));
+        for(const d of sorted.slice(0,5)){
+          info_svg.select("#bottom_item_"+(sorted.indexOf(d)+1)).text(formatNum((sorted.indexOf(d)+1)+". "+d.name+" ("+d.cases_thisWeek_perMil+")"));
+        }
+        for(const d of sorted.slice(sorted.length-5,sorted.length)){
+          info_svg.select("#top_item_"+(sorted.length-sorted.indexOf(d))).text(formatNum((sorted.length-sorted.indexOf(d))+". "+d.name+" ("+d.cases_thisWeek_perMil+")"));
+        }
+      }
+
+      function formatNum(x) {
+        return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+      }
+
+      function getCaseChange(country) {
+          for (const d of country_data) {
+            if (country.localeCompare(d.name) == 0)
+                if (d.cases_weeklyChange > 0)
+                  return "red"
+                else if (d.cases_weeklyChange < 0)
+                  return "green"
+                else
+                  return 0
+          }
+          return 0;
+      }
+
+      function throttle() {
+        window.clearTimeout(throttleTimer);
+        throttleTimer = window.setTimeout(function() {
+          redraw();
+        }, 200);
+      }
+
+      function setupViz(width, height) {
+        svg = d3.select("#map-container")
+        .append("svg")
+          .attr("id", "main_svg")
+          .attr("width", width)
+          .attr("height", height)
+          .style("display", "block")
+          .style("margin", "0 0");
+
+        info_svg = d3.select("#info-container")
+        .append("svg")
+          .attr("id", "info_svg")
+          .style("margin", "2% 2%")
+          .attr("width", width/1.9)
+          .attr("min-width", width/1.8)
+          .attr("height", height)
+      }
+
+      function displayInfo(){
+        info_svg.append("g")
+        .attr("id","g_prev_total")
+        .attr("transform", "translate("+0+","+(fontScale(width))+")")
+        .append("text")
+          .attr("id", "total_prev_cases_label")
+          .text("Total Cases (Prev. Week):")
+          .attr("font-weight", "bold")
+          .attr("font-size", fontScale(width));
+        info_svg.select("g#g_prev_total")
+          .append("text")
+            .attr("id", "total_prev_cases")
+            .attr("transform", "translate("+(fontScale(width)*12.3)+",0)")
+            .attr("font-size", fontScale(width))
+            .text("0");
+        info_svg.append("g")
+        .attr("id","g_curr_total")
+          .attr("transform", "translate("+0+","+(fontScale(width)*2.3)+")")
+          .append("text")
+            .attr("id", "total_curr_cases_label")
+            .text("Total Cases (Curr. Week):")
+            .attr("font-weight", "bold")
+            .attr("font-size", fontScale(width));
+        info_svg.select("g#g_curr_total")
+          .append("text")
+            .attr("id", "total_curr_cases")
+            .attr("transform", "translate("+(fontScale(width)*12.3)+",0)")
+            .attr("font-size", fontScale(width))
+            .text("0");
+
+        info_svg.append("g")
+          .attr("id","g_top_5")
+          .attr("transform", "translate("+0+","+(fontScale(width)*5.5)+")")
+          .append("text")
+            .attr("id", "top_5_label")
+            .text("Highest Cases Per Million People")
+            .attr("font-weight", "bold")
+            .attr("font-size", fontScale(width));
+        info_svg.selectAll("g_top_5")
+          .data([1,2,3,4,5]).enter()
+          .append("text")
+          .attr("id", d=>"top_item_"+d)
+            .attr("y", d => (fontScale(width)*parseInt(d))+fontScale(width)*5.6)
+            .text(d=>d+".")
+            .attr("font-size", fontScale(width))-2;
+
+        info_svg.append("g")
+        .attr("id","g_bottom_5")
+          .attr("transform", "translate("+0+","+(fontScale(width)*13)+")")
+          .append("text")
+            .attr("id", "bottom_5_label")
+            .text("Lowest Cases Per Million People")
+            .attr("font-weight", "bold")
+            .attr("font-size", fontScale(width));
+        info_svg.selectAll("g_bottom_5")
+          .data([1,2,3,4,5]).enter()
+          .append("text")
+          .attr("id", d=>"bottom_item_"+d)
+            .attr("y", d => (fontScale(width)*parseInt(d))+fontScale(width)*13.1)
+            .text(d=>d+".")
+            .attr("font-size", fontScale(width))-2;
+
+        updateTotals();
+        updateRanking();
+      }
+
+      function redraw() {
+        width = Math.max(document.getElementById('map-container').offsetWidth,300);
+        height = width * 0.65;
+        d3.select('#main_svg').remove();
+        d3.select('#info_svg').remove();
+        d3.selectAll('g').remove()
+        setupViz(width,height);
+        d3.json("../data/world.geojson", createMap);
+      }
+      
+      function displayLegend(){
+        var labels = ["Decreased Cases", "Increased Cases"]
+        var sizeScale = d3.scale.linear().domain([0, 1000]).range([5,15])
+        var size = sizeScale(width)
+        var legendColors =["green", "red"]
+        
+        legend = d3.select("#main_svg")
+        .append("svg")
+          .attr("id", "legend")
+          .attr("font-family", "Arial")
+          .attr("width", width)
+          .attr("height", height);
+
+        legend.selectAll("indicators")
+          .data(labels)
+          .enter()
+          .append("g")
+            .attr("id", "legend-item")
+            .attr("transform", (d,i) => "translate("+size*1.4+","+(height/1.08 - i*size*1.4)+")")
+          .append("rect")
+            .attr("id", d=>legendColors[labels.indexOf(d)])
+            .attr("transform", (d,i) => "translate(0,0)")
+            .attr("width", size)
+            .attr("height", size)
+            .style("stroke", "black")
+            .style("fill", function(d){ return legendColors[labels.indexOf(d)]})
+
+        legend.selectAll("#legend-item")
+          .append("text")
+            .style("fill", "black")
+            .attr("transform", "translate("+(sizeScale(width)*1.3)+","+(size/1.7)+")")
+            .text(function(d){ return d})
+            .attr("text-anchor", "left")
+            .style("font-size", fontScale(width)+0.5)
+            .style("alignment-baseline", "middle")
+
+        legend.select("#legend-item")
+          .append("text")
+            .text("Change from Previous Week")
+            .style("font-weight", "bold")
+            .style("font-size", fontScale(width)+0.5)
+            .attr("transform", "translate(0,"+(-size*1.8)+")")
+      };
+
+    </script>
+  </body>
+</html>
