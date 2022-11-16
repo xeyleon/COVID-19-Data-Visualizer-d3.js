@@ -163,7 +163,7 @@
 
       //Initialize
       function initializeData(){
-        d3.csv("/data/north_america_covid_weekly_trend.csv",
+        d3.csv("https://xeyleon.github.io/COVID-19-Data-Visualizer-d3.js/data/north_america_covid_weekly_trend.csv",
         function(error, rows) {
             rows.forEach(function(r) {
                 NA_data.push({
@@ -185,7 +185,7 @@
             });
         });
   
-        d3.csv("/data/covid_south_america_weekly_trend.csv",
+        d3.csv("https://xeyleon.github.io/COVID-19-Data-Visualizer-d3.js/data/covid_south_america_weekly_trend.csv",
         function(error, rows) {
             rows.forEach(function(r) {
                 SA_data.push({
