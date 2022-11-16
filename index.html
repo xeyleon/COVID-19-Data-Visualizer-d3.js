@@ -469,7 +469,7 @@
         d3.select('#info_svg').remove();
         d3.selectAll('g').remove()
         setupViz(width,height);
-        d3.json("../data/world.geojson", createMap);
+        d3.json("https://xeyleon.github.io/COVID-19-Data-Visualizer-d3.js//data/world.geojson", createMap);
       }
       
       function displayLegend(){
